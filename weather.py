@@ -1,7 +1,12 @@
 import requests
-                
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+API_KEY = os.getenv('WEATHER_API_KEY')
+
 def get_weather_statistics(location: str, date: str):
-    request_url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{location}/{date}?unitGroup=us&include=current&key=3JDHJLN4ELHSUMZTBFXHPF6QY&contentType=json"
+    request_url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{location}/{date}?unitGroup=us&include=current&key={API_KEY}&contentType=json"
     response = requests.request("GET", request_url)
     if response.status_code != 200:
         print('Search Error: ', response.status_code)
