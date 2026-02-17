@@ -1,8 +1,8 @@
-import nflreadpy as nfl
 from model import model
+import pandas as pd
 
-def get_pass_attempts(season: int):
-    team_stats = nfl.load_team_stats([season]).to_pandas()
+def get_pass_attempts():
+    team_stats = pd.read_csv("nfl/team_stats.csv")
 
     team_stats['pass_attempts_last_3'] = (team_stats.groupby('team')['attempts'].shift(1).rolling(3, min_periods=1).mean())
     team_stats['pass_attempts_last_5'] = (team_stats.groupby('team')['attempts'].shift(1).rolling(5, min_periods=1).mean())
@@ -11,7 +11,7 @@ def get_pass_attempts(season: int):
     return team_stats
 
 if __name__ == "__main__":
-    df = get_pass_attempts(2025)
+    df = get_pass_attempts()
     X = df[["pass_attempts_last_3", "pass_attempts_last_5", "pass_attempts_last_8"]]
     y = df[["attempts"]]
     

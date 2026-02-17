@@ -1,10 +1,9 @@
-import nflreadpy as nfl
 from model import model
 import numpy as np
+import pandas as pd
 
-def get_yards_per_catch(player_name: str, seasons: list[int]):
-    player_stats = nfl.load_player_stats(seasons).to_pandas()
-    df = player_stats[player_stats["player_display_name"] == player_name].copy()
+def get_yards_per_catch():
+    df = pd.read_csv("nfl/player_stats.csv")
     
     df["yards_per_catch"] = df["receiving_yards"] / df["receptions"].replace(0, np.nan)
     df["receiving_air_yards_last_3"] = (df['receiving_air_yards'].shift(1).rolling(3, min_periods=1).mean())
@@ -22,7 +21,7 @@ def get_yards_per_catch(player_name: str, seasons: list[int]):
     return df
 
 if __name__ == "__main__":
-    df = get_yards_per_catch("Cooper Kupp", [2020, 2021, 2022, 2023, 2024, 2025])
+    df = get_yards_per_catch()
 
     X = df[["receiving_air_yards_last_3", "receiving_air_yards_last_5", "receiving_air_yards_last_8",
             "receiving_yards_after_catch_last_3", "receiving_yards_after_catch_last_5", 

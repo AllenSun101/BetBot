@@ -43,6 +43,6 @@ def model_predict(X, y):
     )
 
     model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+    y_pred = model.predict(X_test)[0]
 
-    return y_pred    
+    return y_pred

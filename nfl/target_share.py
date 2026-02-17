@@ -1,10 +1,9 @@
-import nflreadpy as nfl
 from model import model
+import pandas as pd
 
-def get_target_share(player_name: str, seasons: list[int]):
-    player_stats = nfl.load_player_stats(seasons).to_pandas()
-    df = player_stats[player_stats["player_display_name"] == player_name].copy()
-    
+def get_target_share():
+    df = pd.read_csv("nfl/player_stats.csv")
+
     df["target_share_last_3"] = (df['target_share'].shift(1).rolling(3, min_periods=1).mean())
     df["target_share_last_5"] = (df['target_share'].shift(1).rolling(5, min_periods=1).mean())
     df["target_share_last_8"] = (df['target_share'].shift(1).rolling(8, min_periods=1).mean())
@@ -17,7 +16,7 @@ def get_target_share(player_name: str, seasons: list[int]):
     return df
 
 if __name__ == "__main__":
-    df = get_target_share("Cooper Kupp", [2020, 2021, 2022, 2023, 2024, 2025])
+    df = get_target_share()
 
     X = df[["target_share_last_3", "target_share_last_5", "target_share_last_8",
             "targets_last_3", "targets_last_5", "targets_last_8",
