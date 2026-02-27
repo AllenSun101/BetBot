@@ -1,0 +1,28 @@
+Profit=X-1
+EV=p⋅X−1
+EV=pD−1
+Dboost​=1+1.5(D−1)
+
+splits = "http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2025/types/2/teams/8/athletes/3046779/statistics?lang=en&region=us"
+splits = "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/3046779/splits"
+
+depth_charts = nfl.load_depth_charts([2025]).to_pandas()
+next_gen = nfl.load_nextgen_stats([2025]).to_pandas()
+rosters = nfl.load_rosters_weekly([2025]).to_pandas()
+
+"""
+neutral_pass_rate -> calculated per team -> up until each game?
+spread -> game odds
+over_under -> game odds
+home/away
+rush yards allowed
+pass yards allowed
+pass success rate allowed
+plays per game
+seconds per play
+pass rate when trailing
+pass rate when leading
+weather stats
+
+pass attempts
+"""

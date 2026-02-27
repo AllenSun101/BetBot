@@ -28,4 +28,4 @@ def get_weather_statistics(location: str, date: str):
     return output
 
 if __name__ == "__main__":
-    print(get_weather_statistics("Houston Texas", "2026-02-10T05:00:00"))
+    print(get_weather_statistics("Mercedes-Benz Superdome New Orleans", "2025-09-07T12:00:00"))
