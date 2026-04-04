@@ -41,11 +41,12 @@ from __future__ import annotations
 
 from nba_api.stats.endpoints import leaguegamefinder, boxscoretraditionalv3
 import argparse
+import asyncio
 import json
 import pandas as pd
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -53,6 +54,7 @@ log = logging.getLogger(__name__)
 
 DATA_DIR        = Path("data")
 MASTER_CSV      = DATA_DIR / "player_data_full.csv"
+INJURY_CSV      = DATA_DIR / "injury_data.csv"
 FAILED_IDS_JSON = DATA_DIR / "failed_game_ids.json"
 SEASON          = "2025-26"
 
@@ -60,7 +62,241 @@ SLEEP_SUCCESS = 1.5
 SLEEP_RETRY   = 5
 MAX_RETRIES   = 2
 
+# ── Injury status → continuous severity score ──────────────────────────────────
+# Higher = more severely unavailable. Used as a continuous signal in models.
+_INJURY_SEVERITY: dict[str, float] = {
+    "Out":          1.00,
+    "Doubtful":     0.75,
+    "Questionable": 0.50,
+    "GTD":          0.40,   # Game-Time Decision
+    "Day-To-Day":   0.30,
+    "Probable":     0.25,
+    "Available":    0.00,
+    "Active":       0.00,
+}
+
+# Injury-type severity multipliers (applied on top of status score)
+_INJURY_TYPE_WEIGHTS: dict[str, float] = {
+    "achilles":  1.5,
+    "knee":      1.3,
+    "back":      1.2,
+    "hamstring": 1.2,
+    "shoulder":  1.1,
+    "ankle":     1.1,
+    "foot":      1.1,
+    "hip":       1.1,
+    "illness":   0.8,
+    "rest":      0.6,   # load management — less health-concerning
+    "personal":  0.5,
+}
+
 DATA_DIR.mkdir(exist_ok=True)
+
+
+# ── Injury fetch (nbainjuries) ─────────────────────────────────────────────────
+# nbainjuries scrapes the official NBA injury report PDF directly.
+# Install: pip install nbainjuries
+#
+# The report is published on a rolling schedule throughout the day.
+# We sample the 5:30 PM ET report (pre-game, covers all games that day).
+# For back-to-backs the 1 PM same-day report is the right one — but
+# 5:30 PM the prior day is a safe conservative default for training data.
+
+_REPORT_HOUR   = 17   # 5 PM ET — reliably published pre-game
+_REPORT_MINUTE = 30
+
+def _injury_severity(status: str, reason: str = "") -> float:
+    """Compute a continuous severity score from status string and injury reason."""
+    base = _INJURY_SEVERITY.get(str(status).strip(), 0.0)
+    if base == 0.0:
+        return 0.0
+    reason_lower = str(reason).lower()
+    multiplier = max(
+        (w for kw, w in _INJURY_TYPE_WEIGHTS.items() if kw in reason_lower),
+        default=1.0,
+    )
+    return min(base * multiplier, 1.5)
+
+
+def _normalize_injury_df(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
+    """
+    Normalise a raw nbainjuries DataFrame into the canonical schema:
+        GAME_DATE, PLAYER_NAME, TEAM_ABBREVIATION, STATUS, REASON,
+        SEVERITY_SCORE, IS_OUT, IS_QUESTIONABLE
+    
+    nbainjuries returns columns: Game Date, Game Time, Matchup, Team,
+    Player Name, Current Status, Reason.
+    """
+    # Normalise column names to UPPER_SNAKE
+    df = df.copy()
+    df.columns = (
+        df.columns.str.strip()
+                  .str.upper()
+                  .str.replace(" ", "_", regex=False)
+    )
+
+    rename = {
+        "PLAYER_NAME":    "PLAYER_NAME",   # already correct
+        "TEAM":           "TEAM_ABBREVIATION",
+        "CURRENT_STATUS": "STATUS",
+        "REASON":         "REASON",
+    }
+    for raw, clean in rename.items():
+        if raw in df.columns and clean not in df.columns:
+            df = df.rename(columns={raw: clean})
+
+    # nbainjuries "Team" column is the full team name, not tricode.
+    # We keep it as-is and let injury_features.py match on PLAYER_NAME,
+    # which is unambiguous.  The TEAM_ABBREVIATION merge in feature
+    # engineering uses the box-score tricode, so we map full names here.
+    _TEAM_NAME_TO_TRICODE = {
+        "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
+        "Charlotte Hornets": "CHA", "Chicago Bulls": "CHI", "Cleveland Cavaliers": "CLE",
+        "Dallas Mavericks": "DAL", "Denver Nuggets": "DEN", "Detroit Pistons": "DET",
+        "Golden State Warriors": "GSW", "Houston Rockets": "HOU", "Indiana Pacers": "IND",
+        "LA Clippers": "LAC", "Los Angeles Clippers": "LAC", "Los Angeles Lakers": "LAL",
+        "LA Lakers": "LAL", "Memphis Grizzlies": "MEM", "Miami Heat": "MIA",
+        "Milwaukee Bucks": "MIL", "Minnesota Timberwolves": "MIN",
+        "New Orleans Pelicans": "NOP", "New York Knicks": "NYK",
+        "Oklahoma City Thunder": "OKC", "Orlando Magic": "ORL",
+        "Philadelphia 76ers": "PHI", "Phoenix Suns": "PHX",
+        "Portland Trail Blazers": "POR", "Sacramento Kings": "SAC",
+        "San Antonio Spurs": "SAS", "Toronto Raptors": "TOR",
+        "Utah Jazz": "UTA", "Washington Wizards": "WAS",
+    }
+    if "TEAM_ABBREVIATION" in df.columns:
+        df["TEAM_ABBREVIATION"] = df["TEAM_ABBREVIATION"].map(
+            lambda t: _TEAM_NAME_TO_TRICODE.get(str(t).strip(), str(t).strip())
+        )
+
+    if "REASON" not in df.columns:
+        df["REASON"] = ""
+    if "STATUS" not in df.columns or "PLAYER_NAME" not in df.columns:
+        return pd.DataFrame()
+
+    # Normalise player name: nbainjuries uses "Last, First" format
+    # e.g. "Brown, Jaylen" → "Jaylen Brown"
+    def _flip_name(name: str) -> str:
+        name = str(name).strip()
+        if "," in name:
+            parts = [p.strip() for p in name.split(",", 1)]
+            return f"{parts[1]} {parts[0]}"
+        return name
+
+    df["PLAYER_NAME"] = df["PLAYER_NAME"].apply(_flip_name)
+
+    df["GAME_DATE"]       = date_str
+    df["SEVERITY_SCORE"]  = df.apply(
+        lambda r: _injury_severity(r["STATUS"], r.get("REASON", "")), axis=1
+    )
+    df["IS_OUT"]          = (df["STATUS"].str.strip() == "Out").astype(int)
+    df["IS_QUESTIONABLE"] = df["STATUS"].str.strip().isin(
+        ["Questionable", "GTD", "Day-To-Day"]
+    ).astype(int)
+
+    keep = ["GAME_DATE", "PLAYER_NAME", "TEAM_ABBREVIATION",
+            "STATUS", "REASON", "SEVERITY_SCORE", "IS_OUT", "IS_QUESTIONABLE"]
+    return df[[c for c in keep if c in df.columns]]
+
+
+async def _fetch_injury_range_async(dates: list[datetime]) -> pd.DataFrame:
+    """
+    Batch-fetch injury reports for a list of dates using nbainjuries async module.
+    Significantly faster than sequential fetching for large date ranges.
+    """
+    from nbainjuries import injury_asy
+    import aiohttp
+
+    timestamps = [
+        d.replace(hour=_REPORT_HOUR, minute=_REPORT_MINUTE)
+        for d in dates
+    ]
+
+    frames: list[pd.DataFrame] = []
+    async with aiohttp.ClientSession() as session:
+        tasks = [
+            injury_asy.get_reportdata(ts, session=session, return_df=True)
+            for ts in timestamps
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for ts, result in zip(timestamps, results):
+        date_str = ts.strftime("%Y-%m-%d")
+        if isinstance(result, Exception):
+            log.warning(f"  [injury] {date_str}: {result}")
+            continue
+        if result is None or (isinstance(result, pd.DataFrame) and result.empty):
+            continue
+        df = result if isinstance(result, pd.DataFrame) else pd.DataFrame(result)
+        normed = _normalize_injury_df(df, date_str)
+        if not normed.empty:
+            frames.append(normed)
+            log.info(f"  [injury] {date_str}: {len(normed)} entries")
+
+    if not frames:
+        return pd.DataFrame()
+    combined = pd.concat(frames, ignore_index=True)
+    combined["GAME_DATE"] = pd.to_datetime(combined["GAME_DATE"])
+    return combined
+
+
+def fetch_injury_range(start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    Fetch injury reports for every date in [start_date, end_date].
+    Uses nbainjuries async batch fetching for speed.
+
+    Install: pip install nbainjuries aiohttp
+
+    Returns a combined DataFrame with canonical columns, or empty on failure.
+    """
+    try:
+        from nbainjuries import injury_asy
+    except ImportError:
+        raise ImportError(
+            "nbainjuries is required for injury data.\n"
+            "Install with:  pip install nbainjuries aiohttp"
+        )
+
+    start  = datetime.strptime(start_date, "%Y-%m-%d")
+    end    = datetime.strptime(end_date,   "%Y-%m-%d")
+    dates  = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    log.info(f"[injury] Fetching {len(dates)} reports ({start_date} → {end_date})…")
+
+    return asyncio.run(_fetch_injury_range_async(dates))
+
+
+def load_injury_data() -> pd.DataFrame:
+    """
+    Load the cached injury CSV from disk (written by run_pipeline / run_injury_update).
+    Returns an empty DataFrame if the file doesn't exist yet.
+    Feature engineering scripts call this instead of hitting the API directly.
+    """
+    if not INJURY_CSV.exists():
+        log.warning(f"[injury] {INJURY_CSV} not found — run the pipeline first.")
+        return pd.DataFrame()
+    df = pd.read_csv(INJURY_CSV, parse_dates=["GAME_DATE"])
+    log.info(f"[injury] Loaded {len(df):,} injury rows from {INJURY_CSV}")
+    return df
+
+
+def _save_injury_data(new_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge new injury rows onto the existing injury CSV, deduplicate, and save.
+    Dedup key: (GAME_DATE, PLAYER_NAME, TEAM_ABBREVIATION).
+    """
+    if INJURY_CSV.exists():
+        existing = pd.read_csv(INJURY_CSV, parse_dates=["GAME_DATE"])
+    else:
+        existing = pd.DataFrame()
+
+    combined = pd.concat([existing, new_df], ignore_index=True) if not existing.empty else new_df
+    combined["GAME_DATE"] = pd.to_datetime(combined["GAME_DATE"])
+    combined = combined.drop_duplicates(
+        subset=["GAME_DATE", "PLAYER_NAME", "TEAM_ABBREVIATION"], keep="last"
+    ).sort_values(["GAME_DATE", "TEAM_ABBREVIATION", "PLAYER_NAME"])
+    combined.to_csv(INJURY_CSV, index=False)
+    log.info(f"[injury] Saved {len(combined):,} injury rows to {INJURY_CSV}")
+    return combined
 
 
 # ── Column mapping ─────────────────────────────────────────────────────────────
@@ -249,6 +485,7 @@ def _merge_and_save(master_df: pd.DataFrame, new_rows: list[pd.DataFrame]) -> pd
 def run_pipeline(start_date: str, end_date: str) -> pd.DataFrame:
     """
     Fetch all games in the date range, normalize columns, and append to master CSV.
+    Also fetches injury reports for the same date range and saves to injury_data.csv.
     Failures are recorded to failed_game_ids.json automatically.
     """
     if MASTER_CSV.exists():
@@ -292,6 +529,12 @@ def run_pipeline(start_date: str, end_date: str) -> pd.DataFrame:
         master_df = _merge_and_save(master_df, all_new_rows)
     else:
         log.info("No new rows to add")
+
+    # ── Fetch injury data for the same date range ──────────────────────────────
+    log.info(f"Fetching injury reports for {start_date} → {end_date}…")
+    injury_df = fetch_injury_range(start_date, end_date)
+    if not injury_df.empty:
+        _save_injury_data(injury_df)
 
     return master_df
 
@@ -388,6 +631,21 @@ def retry_failed(clear_on_success: bool = True) -> dict:
     return summary
 
 
+# ── Standalone injury update ───────────────────────────────────────────────────
+
+def run_injury_update(start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    Fetch and save injury data for a date range without re-fetching box scores.
+    Useful for backfilling injury history or updating injury data independently.
+    """
+    log.info(f"Running injury-only update: {start_date} → {end_date}")
+    injury_df = fetch_injury_range(start_date, end_date)
+    if not injury_df.empty:
+        return _save_injury_data(injury_df)
+    log.warning("No injury data fetched.")
+    return pd.DataFrame()
+
+
 # ── Load helper (used by feature engineering) ─────────────────────────────────
 
 def load_and_normalize(path: Path | str) -> pd.DataFrame:
@@ -416,8 +674,11 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples
 --------
-  # Fetch games for a date range
+  # Fetch games + injury reports for a date range
   python data_pipeline.py --start 2025-10-30 --end 2025-11-15
+
+  # Fetch/update injury reports only (no box score re-fetch)
+  python data_pipeline.py --start 2025-10-30 --end 2025-11-15 --injury-only
 
   # Show which game IDs are currently marked as failed
   python data_pipeline.py --list-failed
@@ -431,6 +692,7 @@ Examples
     )
     p.add_argument("--start",           metavar="YYYY-MM-DD", help="Start date for range fetch, inclusive")
     p.add_argument("--end",             metavar="YYYY-MM-DD", help="End date for range fetch, inclusive")
+    p.add_argument("--injury-only",     action="store_true",  help="Fetch/update injury reports only, skip box scores")
     p.add_argument("--retry",           action="store_true",  help="Retry all failed game IDs")
     p.add_argument("--keep-on-success", action="store_true",
                    help="With --retry: keep game in failed list even after it succeeds")
@@ -464,10 +726,17 @@ if __name__ == "__main__":
             print(f"  Still failing: {', '.join(summary['still_failed'])}")
 
     elif args.start and args.end:
-        df = run_pipeline(start_date=args.start, end_date=args.end)
-        print(f"\nFinal dataset: {len(df):,} rows")
-        print(f"Unique players: {df['PLAYER_ID'].nunique()}")
-        print(f"Failed IDs on record: {len(_load_failed())}")
+        if args.injury_only:
+            injury_df = run_injury_update(start_date=args.start, end_date=args.end)
+            print(f"\nInjury update complete: {len(injury_df):,} total rows in {INJURY_CSV}")
+        else:
+            df = run_pipeline(start_date=args.start, end_date=args.end)
+            print(f"\nFinal dataset: {len(df):,} rows")
+            print(f"Unique players: {df['PLAYER_ID'].nunique()}")
+            print(f"Failed IDs on record: {len(_load_failed())}")
+            injury_df = load_injury_data()
+            if not injury_df.empty:
+                print(f"Injury rows on record: {len(injury_df):,} ({injury_df['GAME_DATE'].nunique()} dates)")
 
     else:
         _build_parser().print_help()
