@@ -65,6 +65,29 @@ FEATURE_COLS = [
     "ROLL5_MIN_x_REST", "CONSISTENCY_x_RANK",
     "VETERAN_x_REST", "EWM5_x_OPP_PACE", "RAMP_x_ROLE",
     "DEPTH_x_RANK", "VOL_RATIO_x_STREAK",
+    # ── Injury features ──────────────────────────────────────────────────────
+    # Own injury status
+    "PLAYER_STATUS_SCORE",
+    "PLAYER_IS_OUT",
+    "PLAYER_IS_QUESTIONABLE",
+    "PLAYER_INJURY_RISK_ROLL5",
+    "DAYS_SINCE_LAST_INJURY",
+    "RETURN_FROM_INJURY_FLAG",
+    "INJURY_GAMES_MISSED_RECENT",
+    # Teammate redistribution
+    "TEAMMATE_MIN_ABSORBED",
+    "TEAMMATE_FGA_ABSORBED",
+    "TEAM_STARS_OUT",
+    "LINEUP_DISRUPTION_SCORE",
+    "TEAM_INJURY_SEVERITY",
+    "TEAM_INJURY_SEVERITY_ROLL5",
+    # Opponent
+    "OPP_INJURY_SEVERITY",
+    "OPP_STARS_OUT",
+    # Composite interactions
+    "INJURY_MIN_BOOST",
+    "INJURY_PTS_BOOST",
+    "OPP_INJURY_ADVANTAGE",
 ]
 
 
@@ -107,26 +130,6 @@ class MinutesPredictor(BasePredictor):
         return super().load(path or MIN_MODEL_PKL)
 
 
-# ── Helper: resolve player names aligned to ML dataset ────────────────────────
-
-def load_player_names_for_min_dataset() -> pd.Series:
-    """
-    Re-derives the player-name Series that aligns row-for-row with ml_dataset_minutes.csv.
-    Mirrors the filtering done in minutes_feature_engineering.py.
-    """
-    raw = (
-        pd.read_csv(DATA_PATH)
-        .assign(GAME_DATE=lambda d: pd.to_datetime(d["GAME_DATE"], format="mixed"))
-        .query("MIN > 2")
-        .sort_values(["PLAYER_ID", "GAME_DATE"])
-        .reset_index(drop=True)
-    )
-    min_roll5 = raw.groupby("PLAYER_ID")["MIN"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=2).mean()
-    )
-    return raw.loc[min_roll5.notna(), "PLAYER_NAME"].reset_index(drop=True)
-
-
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def _compute_feature_importances(predictor: MinutesPredictor, X: pd.DataFrame, y: pd.Series):
@@ -157,11 +160,18 @@ def _compute_feature_importances(predictor: MinutesPredictor, X: pd.DataFrame, y
 
 if __name__ == "__main__":
     df = pd.read_csv(ML_DATASET_MIN)
-    X = df.drop(columns=["MIN_TARGET"])
-    y = df["MIN_TARGET"]
 
-    player_names = load_player_names_for_min_dataset()
-    assert len(player_names) == len(X), f"Shape mismatch: {len(player_names)} vs {len(X)}"
+    # PLAYER_NAME is saved into ml_dataset_minutes.csv by minutes_feature_engineering.py.
+    # Reading it here guarantees exact row alignment with X — no recomputation needed.
+    if "PLAYER_NAME" not in df.columns:
+        raise ValueError(
+            "PLAYER_NAME column not found in ml_dataset_minutes.csv.\n"
+            "Re-run minutes_feature_engineering.py to regenerate the dataset."
+        )
+
+    player_names = df["PLAYER_NAME"].copy()
+    X = df.drop(columns=["MIN_TARGET", "PLAYER_NAME"])
+    y = df["MIN_TARGET"]
 
     print(f"Dataset: {X.shape[0]:,} rows | {X.shape[1]} features | {player_names.nunique()} players\n")
     predictor = MinutesPredictor()

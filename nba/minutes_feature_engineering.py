@@ -9,6 +9,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from config import DATA_PATH, ML_DATASET_MIN, X_FEATURES_MIN, Y_TARGET_MIN
+from injury_features import build_injury_features, merge_injury_features_into_df, _all_injury_feature_cols
 
 def load_data():
     print("Loading data...")
@@ -311,26 +312,83 @@ def final_assembly(df):
         # Interactions
         'FATIGUE_x_CLOSER','SCORER_x_HOME','EFFICIENCY_x_OPP','ROLL5_MIN_x_REST','CONSISTENCY_x_RANK','VETERAN_x_REST','EWM5_x_OPP_PACE','RAMP_x_ROLE',
         'DEPTH_x_RANK','VOL_RATIO_x_STREAK',
+        # ── Injury features ──────────────────────────────────────────────────
+        # Own injury status
+        'PLAYER_STATUS_SCORE',
+        'PLAYER_IS_OUT',
+        'PLAYER_IS_QUESTIONABLE',
+        'PLAYER_INJURY_RISK_ROLL5',
+        'DAYS_SINCE_LAST_INJURY',
+        'RETURN_FROM_INJURY_FLAG',
+        'INJURY_GAMES_MISSED_RECENT',
+        # Teammate redistribution
+        'TEAMMATE_MIN_ABSORBED',
+        'TEAMMATE_FGA_ABSORBED',
+        'TEAM_STARS_OUT',
+        'LINEUP_DISRUPTION_SCORE',
+        'TEAM_INJURY_SEVERITY',
+        'TEAM_INJURY_SEVERITY_ROLL5',
+        # Opponent
+        'OPP_INJURY_SEVERITY',
+        'OPP_STARS_OUT',
+        # Composite interactions
+        'INJURY_MIN_BOOST',
+        'INJURY_PTS_BOOST',
+        'OPP_INJURY_ADVANTAGE',
     ]
 
-    X = df[FEATURE_COLS].copy()
+    # Keep only columns actually present (graceful degradation when injury data unavailable)
+    available_cols = [c for c in FEATURE_COLS if c in df.columns]
+    X = df[available_cols].copy()
     y = df['MIN'].copy()
+
+    # PLAYER_NAME is carried alongside X so the predictor never has to
+    # recompute it independently — eliminates the shape-mismatch risk entirely.
+    player_names = df['PLAYER_NAME'].copy()
+
     valid_mask = X['MIN_ROLL5'].notna() & X['MIN_ROLL3'].notna()
-    X = X[valid_mask].reset_index(drop=True)
-    y = y[valid_mask].reset_index(drop=True)
+    X            = X[valid_mask].reset_index(drop=True)
+    y            = y[valid_mask].reset_index(drop=True)
+    player_names = player_names[valid_mask].reset_index(drop=True)
+
+    # Fill remaining NaNs (e.g. injury cols missing for dates with no report)
+    # with 0 for injury cols and median for rolling stats.
+    injury_cols = [c for c in _all_injury_feature_cols() if c in X.columns]
+    X[injury_cols] = X[injury_cols].fillna(0.0)
     X = X.fillna(X.median(numeric_only=True))
 
     print(f"\n✓ Final X shape : {X.shape}")
+    print(f"✓ Players       : {player_names.nunique()}")
     print(f"✓ Target (MIN)  : mean={y.mean():.1f}  std={y.std():.1f}")
+    present = [c for c in injury_cols if c in X.columns]
+    print(f"✓ Injury features: {len(present)}/{len(_all_injury_feature_cols())} present")
 
-    return X, y
+    return X, y, player_names
 
-def save_outputs(X, y):
+
+def save_outputs(X, y, player_names):
     X.to_csv(X_FEATURES_MIN, index=False)
-    y.to_csv(Y_TARGET_MIN,   index=False)
-    combined = X.copy(); combined['MIN_TARGET'] = y
+    y.to_csv(Y_TARGET_MIN, index=False)
+
+    # ml_dataset_minutes.csv contains X + target + PLAYER_NAME in one file.
+    # The predictor reads PLAYER_NAME from here — no independent recomputation.
+    combined = X.copy()
+    combined['MIN_TARGET']   = y
+    combined['PLAYER_NAME']  = player_names.values
     combined.to_csv(ML_DATASET_MIN, index=False)
-    print(f"\n✓ Saved to {ML_DATASET_MIN}")
+    print(f"\n✓ Saved to {ML_DATASET_MIN}  ({len(combined):,} rows, {player_names.nunique()} players)")
+
+def add_injury_features(df):
+    """
+    Merge injury features into the main game-log DataFrame.
+    Reads data/injury_data.csv — populated by running data_pipeline.py.
+    Returns df unchanged (with a warning) if the CSV doesn't exist yet.
+    """
+    print("Engineering injury features...")
+    inj_features = build_injury_features(player_game_df=df, verbose=True)
+    df = merge_injury_features_into_df(df, inj_features)
+    print(f"  Injury features merged: {len(_all_injury_feature_cols())} columns added")
+    return df
 
 def main():
     df = load_data()
@@ -344,8 +402,15 @@ def main():
     df = interaction_features(df)
     df = game_context_features(df)
 
-    X, y = final_assembly(df)
-    save_outputs(X, y)
+    # Reads data/injury_data.csv written by data_pipeline.py.
+    # Degrades gracefully to zero-filled columns if the file isn't present.
+    try:
+        df = add_injury_features(df)
+    except Exception as e:
+        print(f"  [injury] Skipped injury features: {e}")
+
+    X, y, player_names = final_assembly(df)
+    save_outputs(X, y, player_names)
 
 if __name__ == "__main__":
     main()
