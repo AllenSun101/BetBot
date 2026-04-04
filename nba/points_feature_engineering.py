@@ -23,6 +23,7 @@ from config import (
     DATA_PATH, MIN_MODEL_PKL,
     ML_DATASET_PTS, X_FEATURES_PTS, Y_TARGET_PTS, PTS_PLAYER_NAMES,
 )
+from injury_features import build_injury_features, merge_injury_features_into_df, _all_injury_feature_cols
 
 # ── Rolling / window helpers ───────────────────────────────────────────────────
 
@@ -422,6 +423,34 @@ FEATURE_COLS_PTS = [
     "3PT_RATE_x_EFF", "LOAD_x_FATIGUE", "SCORER_x_OPP", "HOT_x_HOME", "CV_x_CLOSE",
     "EWM_PTS_x_OPP_DEF", "CREATION_x_OPP_PACE", "PREDMIN_x_CREATION",
     "COLD_x_AWAY", "FT_RATE_x_FOUL_RISK",
+    # ── Injury features ──────────────────────────────────────────────────────
+    # Own injury status
+    "PLAYER_STATUS_SCORE",
+    "PLAYER_IS_OUT",
+    "PLAYER_IS_QUESTIONABLE",
+    "PLAYER_INJURY_RISK_ROLL5",
+    "DAYS_SINCE_LAST_INJURY",
+    "RETURN_FROM_INJURY_FLAG",
+    "INJURY_GAMES_MISSED_RECENT",
+    # Teammate redistribution — drives minutes and shot volume changes
+    "TEAMMATE_MIN_ABSORBED",       # estimated extra minutes from absent teammates
+    "TEAMMATE_FGA_ABSORBED",       # estimated extra FGA from absent teammates
+    "TEAM_STARS_OUT",
+    "LINEUP_DISRUPTION_SCORE",
+    "TEAM_INJURY_SEVERITY",
+    "TEAM_INJURY_SEVERITY_ROLL5",
+    # Opponent
+    "OPP_INJURY_SEVERITY",
+    "OPP_STARS_OUT",
+    # Composite interactions (from injury_features.py)
+    "INJURY_MIN_BOOST",            # absorbed_min × minute-consistency
+    "INJURY_PTS_BOOST",            # absorbed_fga × true shooting
+    "OPP_INJURY_ADVANTAGE",
+    # Points-specific injury interactions (computed below in add_injury_features_pts)
+    "INJ_BOOST_x_SCORER",          # teammate_fga_absorbed × scorer role
+    "INJ_BOOST_x_PREDMIN",         # teammate_fga_absorbed × predicted minutes
+    "OPP_DEPLETED_x_EFF",          # opponent depletion × shooting efficiency
+    "RETURN_x_VOL",                # return-from-injury × shot volume (restricted)
 ]
 
 # columns from minutes_feature_engineering needed for the MIN model injection
@@ -451,7 +480,53 @@ MIN_FEATURES = [
     "ROLL5_MIN_x_REST", "CONSISTENCY_x_RANK",
     "VETERAN_x_REST", "EWM5_x_OPP_PACE", "RAMP_x_ROLE",
     "DEPTH_x_RANK", "VOL_RATIO_x_STREAK",
+    # Injury features passed through so predicted minutes is injury-aware
+    "PLAYER_STATUS_SCORE", "PLAYER_IS_OUT", "PLAYER_IS_QUESTIONABLE",
+    "PLAYER_INJURY_RISK_ROLL5", "DAYS_SINCE_LAST_INJURY",
+    "RETURN_FROM_INJURY_FLAG", "INJURY_GAMES_MISSED_RECENT",
+    "TEAMMATE_MIN_ABSORBED", "TEAMMATE_FGA_ABSORBED",
+    "TEAM_INJURY_SEVERITY", "TEAM_STARS_OUT", "LINEUP_DISRUPTION_SCORE",
+    "TEAM_INJURY_SEVERITY_ROLL5",
+    "OPP_INJURY_SEVERITY", "OPP_STARS_OUT",
+    "INJURY_MIN_BOOST", "INJURY_PTS_BOOST", "OPP_INJURY_ADVANTAGE",
 ]
+
+
+def add_injury_features_pts(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge injury features and add points-specific injury interaction terms.
+    Reads data/injury_data.csv — populated by running data_pipeline.py.
+    """
+    print("Engineering injury features (points pipeline)...")
+    inj_features = build_injury_features(player_game_df=df, verbose=True)
+    df = merge_injury_features_into_df(df, inj_features)
+
+    # Points-specific interaction terms — built on top of base injury features
+    # INJ_BOOST_x_SCORER: a primary scorer benefits more from extra shot attempts
+    df["INJ_BOOST_x_SCORER"] = (
+        df["TEAMMATE_FGA_ABSORBED"].fillna(0)
+        * df.get("SCORER_SCORE", pd.Series(0, index=df.index)).fillna(0)
+    )
+    # INJ_BOOST_x_PREDMIN: extra FGA opportunity is larger when the player is already
+    # projected to play more minutes
+    if "PREDICTED_MIN" in df.columns:
+        df["INJ_BOOST_x_PREDMIN"] = df["TEAMMATE_FGA_ABSORBED"].fillna(0) * df["PREDICTED_MIN"].fillna(0)
+    else:
+        df["INJ_BOOST_x_PREDMIN"] = 0.0
+
+    # OPP_DEPLETED_x_EFF: efficient scorers extract more from a depleted defense
+    df["OPP_DEPLETED_x_EFF"] = (
+        df["OPP_INJURY_ADVANTAGE"].fillna(0)
+        * df.get("TRUE_SHOOTING_ROLL5", pd.Series(0, index=df.index)).fillna(0)
+    )
+    # RETURN_x_VOL: players returning from injury often have restricted shot volume
+    df["RETURN_x_VOL"] = (
+        df["RETURN_FROM_INJURY_FLAG"].fillna(0)
+        * df.get("FGA_PER_MIN_ROLL5", pd.Series(0, index=df.index)).fillna(0)
+    )
+
+    print(f"  ✓ {len(_all_injury_feature_cols()) + 4} injury-related features added to points pipeline")
+    return df
 
 
 def assemble_and_filter(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
@@ -467,14 +542,20 @@ def assemble_and_filter(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.S
         & X["FGA_PER_MIN_ROLL5"].notna()
         & X["TRUE_SHOOTING_ROLL5"].notna()
     )
-    X = X[valid_mask].reset_index(drop=True)
-    y = y[valid_mask].reset_index(drop=True)
+    X            = X[valid_mask].reset_index(drop=True)
+    y            = y[valid_mask].reset_index(drop=True)
     player_names = player_names[valid_mask].reset_index(drop=True)
 
+    # Zero-fill injury cols first (missing report dates should be 0, not median)
+    injury_cols = [c for c in _all_injury_feature_cols() if c in X.columns]
+    X[injury_cols] = X[injury_cols].fillna(0.0)
+    # Fill any remaining NaNs in rolling stats with column medians
     X = X.fillna(X.median(numeric_only=True))
+
     print(f"\n✓ X shape   : {X.shape}")
     print(f"✓ Players   : {player_names.nunique()}")
     print(f"✓ Target PTS: mean={y.mean():.1f}  std={y.std():.1f}")
+    print(f"✓ Injury features: {len(injury_cols)}/{len(_all_injury_feature_cols())} present")
     return X, y, player_names
 
 
@@ -482,15 +563,27 @@ def save_outputs(X: pd.DataFrame, y: pd.Series, player_names: pd.Series) -> None
     X.to_csv(X_FEATURES_PTS, index=False)
     y.to_csv(Y_TARGET_PTS, index=False)
     player_names.to_csv(PTS_PLAYER_NAMES, index=False)
+
+    # Embed PLAYER_NAME in the combined CSV so points_predictor.py can read it
+    # directly without re-deriving it (same pattern as minutes pipeline).
     combined = X.copy()
-    combined["PTS_TARGET"] = y
+    combined["PTS_TARGET"]   = y
+    combined["PLAYER_NAME"]  = player_names.values
     combined.to_csv(ML_DATASET_PTS, index=False)
-    print(f"\n✓ Saved to {ML_DATASET_PTS}")
+    print(f"\n✓ Saved to {ML_DATASET_PTS}  ({len(combined):,} rows, {player_names.nunique()} players)")
 
 
 def main() -> None:
     df = load_data()
     df = add_basic_flags(df)
+
+    # Reads data/injury_data.csv written by data_pipeline.py.
+    # Degrades gracefully to zero-filled columns if the file isn't present.
+    try:
+        df = add_injury_features_pts(df)
+    except Exception as e:
+        print(f"  [injury] Skipped injury features: {e}")
+        
     df = add_minutes_passthrough_features(df)
 
     avail_min_features = [c for c in MIN_FEATURES if c in df.columns]
