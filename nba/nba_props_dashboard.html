@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NBA Props Engine</title>
+<style>
+  :root{--bg:#0f1117;--surface:#1a1d27;--card:#21253a;--border:#2d3250;--accent:#4f8ef7;--accent2:#7c5cfc;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--text:#e2e8f0;--muted:#64748b;--radius:10px;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;}
+  header h1{font-size:1.2rem;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+  #status-bar{display:flex;gap:12px;font-size:0.75rem;}
+  .status-dot{display:inline-flex;align-items:center;gap:5px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);} .dot.ok{background:var(--green);} .dot.missing{background:var(--red);}
+  nav{display:flex;gap:4px;padding:16px 28px 0;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap;}
+  .tab{padding:9px 18px;border-radius:var(--radius) var(--radius) 0 0;cursor:pointer;font-size:0.85rem;font-weight:500;color:var(--muted);border:1px solid transparent;border-bottom:none;transition:all .2s;}
+  .tab:hover{color:var(--text);background:var(--card);} .tab.active{color:var(--accent);background:var(--bg);border-color:var(--border);}
+  main{padding:24px 28px;}
+  .panel{display:none;} .panel.active{display:block;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+  @media(max-width:900px){.grid2,.grid3,.grid4{grid-template-columns:1fr;}}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;}
+  .card-title{font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px;}
+  .metric-big{font-size:2rem;font-weight:700;} .metric-sub{font-size:0.78rem;color:var(--muted);margin-top:2px;}
+  label{font-size:0.82rem;color:var(--muted);display:block;margin-bottom:4px;margin-top:12px;}
+  input,select{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:0.88rem;outline:none;}
+  input:focus,select:focus{border-color:var(--accent);}
+  input[type=file]{padding:6px 10px;cursor:pointer;}
+  button{cursor:pointer;border:none;border-radius:6px;padding:10px 20px;font-size:0.88rem;font-weight:600;transition:opacity .15s;}
+  button:hover{opacity:0.85;}
+  .btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;}
+  .btn-secondary{background:var(--surface);border:1px solid var(--border);color:var(--text);}
+  .btn-sm{padding:6px 14px;font-size:0.8rem;}
+  .odds-toggle{display:flex;gap:0;border-radius:6px;overflow:hidden;border:1px solid var(--border);margin-top:4px;}
+  .odds-toggle button{flex:1;border-radius:0;border:none;padding:7px 0;font-size:0.8rem;font-weight:600;background:var(--surface);color:var(--muted);transition:all .15s;}
+  .odds-toggle button.active{background:var(--accent);color:#fff;}
+  table{width:100%;border-collapse:collapse;font-size:0.83rem;}
+  th{text-align:left;padding:8px 10px;font-size:0.73rem;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);}
+  td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.04);}
+  tr:hover td{background:rgba(255,255,255,.02);}
+  .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:0.72rem;font-weight:600;}
+  .badge-green{background:rgba(34,197,94,.15);color:var(--green);}
+  .badge-red{background:rgba(239,68,68,.15);color:var(--red);}
+  .badge-blue{background:rgba(79,142,247,.15);color:var(--accent);}
+  .badge-muted{background:rgba(100,116,139,.12);color:var(--muted);}
+  #toast{position:fixed;bottom:24px;right:24px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px 20px;font-size:0.85rem;max-width:360px;z-index:9999;display:none;box-shadow:0 4px 24px #0008;}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--muted);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .eval-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:0.87rem;}
+  .eval-row:last-child{border-bottom:none;}
+  .eval-key{color:var(--muted);} .eval-val{font-weight:600;}
+  .bet-box{margin-top:16px;border-radius:var(--radius);padding:16px 20px;text-align:center;font-size:1.05rem;font-weight:700;}
+  .bet-yes{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green);}
+  .bet-no{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red);}
+  .retrain-step{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:0.85rem;}
+  .step-icon{font-size:1rem;width:22px;text-align:center;}
+  .better{color:var(--green);} .worse{color:var(--red);}
+  .mini-bar-wrap{margin-top:10px;}
+  .mini-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:0.78rem;}
+  .mini-bar-label{width:110px;color:var(--muted);text-overflow:ellipsis;overflow:hidden;white-space:nowrap;}
+  .mini-bar-bg{flex:1;height:10px;background:var(--border);border-radius:3px;overflow:hidden;}
+  .mini-bar-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));}
+  .mini-bar-val{width:42px;text-align:right;color:var(--muted);}
+  /* Batch tab */
+  .drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:32px;text-align:center;cursor:pointer;transition:border-color .2s;color:var(--muted);}
+  .drop-zone.dragover{border-color:var(--accent);color:var(--text);}
+  .combo-table-wrap{max-height:520px;overflow-y:auto;border-radius:var(--radius);border:1px solid var(--border);}
+  .combo-table-wrap table{font-size:0.8rem;}
+  .joint-bar{display:inline-block;width:52px;height:6px;background:var(--border);border-radius:3px;vertical-align:middle;margin-right:5px;overflow:hidden;}
+  .joint-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:3px;}
+  .filter-row{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;}
+  .filter-row input,.filter-row select{width:auto;flex:1;min-width:120px;}
+  code{background:var(--surface);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:0.82rem;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⛹ NBA Props Engine</h1>
+  <div id="status-bar">Loading…</div>
+</header>
+
+<nav>
+  <div class="tab active" onclick="switchTab('prop')">Prop Evaluator</div>
+  <div class="tab" onclick="switchTab('parlay')">Parlay (2-Leg)</div>
+  <div class="tab" onclick="switchTab('batch')">Batch Combos</div>
+  <div class="tab" onclick="switchTab('eval')">Model Accuracy</div>
+  <div class="tab" onclick="switchTab('retrain')">Retrain Pipeline</div>
+</nav>
+
+<main>
+
+<!-- ══════════════════════════════════════════
+     TAB 1 — SINGLE PROP
+══════════════════════════════════════════ -->
+<div id="tab-prop" class="panel active">
+  <div class="grid2" style="align-items:start">
+    <div class="card">
+      <div class="card-title">Player Prop Input</div>
+      <label>Player Name (exact)</label><input type="text" id="prop-player" placeholder="e.g. Stephen Curry">
+      <label>Opponent</label><input type="text" id="prop-opp" placeholder="e.g. LAL" maxlength="4">
+      <label>Game Date</label><input type="date" id="prop-date">
+      <label>Home Game?</label>
+      <select id="prop-home"><option value="1">Yes — Home</option><option value="0">No — Away</option></select>
+      <label>Prop Line (pts)</label><input type="number" id="prop-line" placeholder="e.g. 24.5" step="0.5">
+      <label>Side</label>
+      <select id="prop-side"><option value="over">Over</option><option value="under">Under</option></select>
+      <label>Book Odds (American)</label><input type="number" id="prop-odds" placeholder="e.g. -110 or +105">
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn-primary" onclick="runProp()" id="prop-btn">Evaluate Prop</button>
+        <button class="btn-secondary btn-sm" onclick="clearResult('prop-result','prop-placeholder')">Clear</button>
+      </div>
+    </div>
+    <div>
+      <div id="prop-result" style="display:none">
+        <div class="card" id="prop-result-inner"></div>
+        <div id="prop-bet-box" class="bet-box" style="margin-top:12px"></div>
+      </div>
+      <div id="prop-placeholder" class="card" style="color:var(--muted);font-size:0.88rem;text-align:center;padding:40px 20px">
+        Fill in the form and click <strong>Evaluate Prop</strong>.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB 2 — PARLAY (2-LEG)
+══════════════════════════════════════════ -->
+<div id="tab-parlay" class="panel">
+
+  <!-- Global odds mode toggle -->
+  <div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:16px;padding:14px 20px;flex-wrap:wrap">
+    <span style="font-size:0.82rem;color:var(--muted);font-weight:600">Payout input mode:</span>
+    <div class="odds-toggle" style="width:280px">
+      <button class="active" id="pm-american" onclick="setParlayMode('american')">American (+260)</button>
+      <button id="pm-mult" onclick="setParlayMode('multiplier')">Multiplier (3.5×)</button>
+    </div>
+    <span id="pm-hint" style="font-size:0.78rem;color:var(--muted)">Enter American odds for the parlay payout below.</span>
+  </div>
+
+  <div class="grid2" style="align-items:start;margin-bottom:14px">
+    <div class="card">
+      <div class="card-title" style="color:var(--accent)">Leg 1</div>
+      <label>Player Name</label><input type="text" id="p1-player" placeholder="e.g. Luka Dončić">
+      <label>Opponent</label><input type="text" id="p1-opp" placeholder="e.g. BOS" maxlength="4">
+      <label>Game Date</label><input type="date" id="p1-date">
+      <label>Home?</label>
+      <select id="p1-home"><option value="1">Yes — Home</option><option value="0">No — Away</option></select>
+      <label>Prop Line (pts)</label><input type="number" id="p1-line" placeholder="e.g. 27.5" step="0.5">
+      <label>Side</label>
+      <select id="p1-side"><option value="over">Over</option><option value="under">Under</option></select>
+      <label>Leg Odds (American, reference only)</label>
+      <input type="number" id="p1-odds" placeholder="e.g. -115 (optional, used for reference display only)">
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:var(--accent2)">Leg 2</div>
+      <label>Player Name</label><input type="text" id="p2-player" placeholder="e.g. Anthony Davis">
+      <label>Opponent</label><input type="text" id="p2-opp" placeholder="e.g. DAL" maxlength="4">
+      <label>Game Date</label><input type="date" id="p2-date">
+      <label>Home?</label>
+      <select id="p2-home"><option value="1">Yes — Home</option><option value="0">No — Away</option></select>
+      <label>Prop Line (pts)</label><input type="number" id="p2-line" placeholder="e.g. 22.5" step="0.5">
+      <label>Side</label>
+      <select id="p2-side"><option value="over">Over</option><option value="under">Under</option></select>
+      <label>Leg Odds (American, reference only)</label>
+      <input type="number" id="p2-odds" placeholder="e.g. -110 (optional)">
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">Parlay Payout</div>
+    <div class="grid2" style="gap:12px">
+      <div>
+        <div id="pw-american">
+          <label>Book Parlay Payout (American odds)</label>
+          <input type="number" id="parlay-odds-am" placeholder="e.g. +260">
+        </div>
+        <div id="pw-mult" style="display:none">
+          <label>Book Parlay Payout (profit multiplier × — e.g. 3.5 means $35 profit on $10)</label>
+          <input type="number" id="parlay-odds-mx" placeholder="e.g. 3.5" step="0.1" min="0.01">
+        </div>
+      </div>
+      <div></div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px">
+      <button class="btn-primary" onclick="runParlay()" id="parlay-btn">Evaluate Parlay</button>
+      <button class="btn-secondary btn-sm" onclick="clearResult('parlay-result','parlay-placeholder')">Clear</button>
+    </div>
+  </div>
+
+  <div id="parlay-result" style="display:none">
+    <div class="grid2" style="margin-bottom:16px" id="parlay-leg-cards"></div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">Combined Parlay Analysis</div>
+      <div class="grid4" id="parlay-kpis" style="margin-bottom:14px"></div>
+      <table>
+        <thead><tr><th></th><th>Probability</th><th>American Odds</th><th>Multiplier</th></tr></thead>
+        <tbody id="parlay-compare-rows"></tbody>
+      </table>
+      <p style="font-size:0.75rem;color:var(--muted);margin-top:10px">⚠ Legs treated as independent. Adjust judgment for same-game parlays.</p>
+    </div>
+    <div id="parlay-bet-box" class="bet-box"></div>
+  </div>
+  <div id="parlay-placeholder" class="card" style="color:var(--muted);font-size:0.88rem;text-align:center;padding:40px 20px">
+    Fill in both legs and the payout, then click <strong>Evaluate Parlay</strong>.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB 3 — BATCH COMBOS
+══════════════════════════════════════════ -->
+<div id="tab-batch" class="panel">
+  <div class="grid2" style="align-items:start;margin-bottom:16px">
+    <div class="card">
+      <div class="card-title">Upload Props Spreadsheet</div>
+      <p style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">
+        Upload an Excel (.xlsx) or CSV. Required columns: <code>player_name</code>, <code>opponent</code>, <code>prop_line</code>.
+        Optional: <code>is_home</code> (0/1), <code>game_date</code>.
+        The model evaluates each player on both over &amp; under, picks the better side, then computes joint probabilities for every pair.
+      </p>
+      <div class="drop-zone" id="batch-drop" onclick="document.getElementById('batch-file').click()">
+        <div style="font-size:1.5rem;margin-bottom:8px">📂</div>
+        <div>Drop .xlsx / .csv here or <strong>click to browse</strong></div>
+        <div id="batch-file-name" style="margin-top:8px;font-size:0.8rem;color:var(--accent)"></div>
+      </div>
+      <input type="file" id="batch-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleBatchFile(this)">
+      <label>Default Game Date (rows without game_date column use this)</label>
+      <input type="date" id="batch-date">
+      <label>Output mode for fair value</label>
+      <div class="odds-toggle">
+        <button class="active" id="bm-american" onclick="setBatchMode('american')">American odds</button>
+        <button id="bm-mult" onclick="setBatchMode('multiplier')">Multiplier (×)</button>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px">
+        <button class="btn-primary" onclick="runBatch()" id="batch-btn">Analyze All Combos</button>
+        <button class="btn-secondary btn-sm" onclick="clearBatch()">Clear</button>
+      </div>
+    </div>
+
+    <div class="card" id="batch-props-card" style="display:none">
+      <div class="card-title">Per-Player Predictions</div>
+      <div style="max-height:400px;overflow-y:auto">
+        <table id="batch-props-table">
+          <thead><tr><th>Player</th><th>vs</th><th>Line</th><th>Best</th><th>P(best)</th><th>Pred pts</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="batch-combos-section" style="display:none">
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:0">All 2-Leg Combinations <span id="combo-count" style="color:var(--accent);font-weight:700"></span></div>
+        <button class="btn-secondary btn-sm" onclick="exportCombos()">Export CSV</button>
+      </div>
+      <div class="filter-row">
+        <input type="number" id="filter-min-joint" placeholder="Min joint prob %" step="1" min="0" max="100" style="max-width:160px">
+        <input type="text" id="filter-player" placeholder="Filter by player name">
+        <select id="filter-sort" style="max-width:220px">
+          <option value="joint_prob">Sort: Joint Prob ↓</option>
+          <option value="fair_american">Sort: Fair American ↓</option>
+          <option value="fair_multiplier">Sort: Multiplier ↓</option>
+        </select>
+        <button class="btn-secondary btn-sm" onclick="applyFilters()">Apply</button>
+      </div>
+      <div class="combo-table-wrap">
+        <table id="batch-combo-table">
+          <thead><tr>
+            <th>Leg 1</th><th>Side</th><th>Line</th><th>P₁</th>
+            <th>Leg 2</th><th>Side</th><th>Line</th><th>P₂</th>
+            <th style="cursor:pointer" onclick="sortCombos('joint_prob')">Joint Prob ↕</th>
+            <th id="fair-header">Fair Odds</th>
+          </tr></thead>
+          <tbody id="batch-combo-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="batch-placeholder" class="card" style="color:var(--muted);font-size:0.88rem;text-align:center;padding:40px 20px">
+    Upload a spreadsheet and click <strong>Analyze All Combos</strong>.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB 4 — MODEL ACCURACY
+══════════════════════════════════════════ -->
+<div id="tab-eval" class="panel">
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-title">Evaluate Model Accuracy (Out-of-Sample Walk-Forward)</div>
+    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">Runs 5-fold time-series cross-validation — predictions are always made on data the model has never seen. These numbers reflect real predictive accuracy, not in-sample fit.</p>
+    <div class="grid2" style="gap:12px;align-items:end">
+      <div>
+        <label>Model</label>
+        <select id="eval-model">
+          <option value="pts">Points</option><option value="min">Minutes</option><option value="both">Both</option>
+        </select>
+      </div>
+      <button class="btn-primary" onclick="runEvaluation()" id="eval-btn" style="width:100%">Run OOS Evaluation</button>
+    </div>
+  </div>
+  <div id="eval-result" style="display:none">
+    <div id="eval-pts-section">
+      <h3 style="font-size:0.9rem;font-weight:600;margin-bottom:12px;color:var(--accent)">Points Model — OOS Walk-Forward</h3>
+      <div class="grid4" id="eval-pts-kpis" style="margin-bottom:16px"></div>
+      <div class="grid2" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-title">Per-Fold Results</div>
+          <table id="eval-pts-fold-table">
+            <thead><tr><th>Fold</th><th>N</th><th>League MAE</th><th>Final MAE</th><th>Final R²</th><th>W/in 5</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="card"><div class="card-title">Error Distribution (full dataset)</div><div id="eval-error-hist"></div></div>
+      </div>
+      <div class="card" style="margin-bottom:16px"><div class="card-title">Player Accuracy — in-sample reference (min 20 games)</div>
+        <table id="eval-player-table"><thead><tr><th>Player</th><th>Games</th><th>League MAE</th><th>Final MAE</th><th>Δ</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div id="eval-min-section" style="display:none">
+      <h3 style="font-size:0.9rem;font-weight:600;margin-bottom:12px;color:var(--accent2)">Minutes Model — OOS Walk-Forward</h3>
+      <div class="grid4" id="eval-min-kpis" style="margin-bottom:16px"></div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Per-Fold Results</div>
+        <table id="eval-min-fold-table">
+          <thead><tr><th>Fold</th><th>N</th><th>League MAE</th><th>Final MAE</th><th>Final R²</th><th>W/in 5</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" id="eval-fi-section" style="display:none"><div class="card-title">Feature Importances</div><div id="eval-fi-bars" class="mini-bar-wrap"></div></div>
+  </div>
+  <div id="eval-placeholder" class="card" style="color:var(--muted);font-size:0.88rem;text-align:center;padding:40px 20px">Click <strong>Run OOS Evaluation</strong> to compute out-of-sample metrics.<br><span style="font-size:0.78rem;margin-top:6px;display:block">⏱ This runs 5-fold walk-forward training — takes a few minutes.</span></div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB 5 — RETRAIN
+══════════════════════════════════════════ -->
+<div id="tab-retrain" class="panel">
+  <div class="grid2" style="align-items:start">
+    <div class="card">
+      <div class="card-title">Retrain Full Pipeline</div>
+      <p style="font-size:0.84rem;color:var(--muted);margin-bottom:16px">Runs all 5 steps: minutes features → minutes model → points features → points model → predictions.</p>
+      <label>Data File Path (optional)</label>
+      <input type="text" id="retrain-data" placeholder="/path/to/player_data_full.csv">
+      <div style="margin-top:14px"><button class="btn-primary" onclick="startRetrain()" id="retrain-btn">Start Retrain</button></div>
+      <div id="retrain-steps" style="margin-top:20px;display:none">
+        <div class="card-title" style="margin-bottom:8px">Progress</div>
+        <div id="retrain-step-list"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Artifact Status</div>
+      <div id="artifact-list" style="font-size:0.85rem"></div>
+      <div style="margin-top:14px"><button class="btn-secondary btn-sm" onclick="refreshStatus()">Refresh</button></div>
+    </div>
+  </div>
+</div>
+
+</main>
+<div id="toast"></div>
+
+<script>
+// ─── UTILITIES ─────────────────────────────────────────
+const TABS = ['prop','parlay','batch','eval','retrain'];
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',TABS[i]===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+}
+function toast(msg,dur=3500){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(el._t);el._t=setTimeout(()=>el.style.display='none',dur);}
+async function api(url,body=null){
+  const opts=body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{method:'GET'};
+  const r=await fetch(url,opts); const j=await r.json();
+  if(!r.ok) throw new Error(j.error||r.statusText);
+  return j;
+}
+const fmt=(v,d=2)=>v==null?'—':Number(v).toFixed(d);
+const pct=v=>v==null?'—':(v*100).toFixed(1)+'%';
+const fmtAm=v=>v==null?'—':(v>0?'+':'')+v;
+const fmtMx=v=>v==null?'—':Number(v).toFixed(2)+'×';
+function clearResult(showId,hideId){document.getElementById(showId).style.display='none';document.getElementById(hideId).style.display='block';}
+document.querySelectorAll('input[type=date]').forEach(el=>el.value=new Date().toISOString().split('T')[0]);
+
+// ─── STATUS ────────────────────────────────────────────
+async function refreshStatus(){
+  try{
+    const s=await api('/api/status');
+    document.getElementById('status-bar').innerHTML=Object.entries(s).map(([k,v])=>`<span class="status-dot"><span class="dot ${v.exists?'ok':'missing'}"></span>${k}</span>`).join('');
+    const al=document.getElementById('artifact-list');
+    if(al) al.innerHTML=Object.entries(s).map(([k,v])=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)"><span>${v.exists?'✅':'❌'}</span><span style="flex:1">${k}</span><span style="color:var(--muted);font-size:0.78rem">${v.mtime_str||'missing'}</span></div>`).join('');
+  }catch{document.getElementById('status-bar').textContent='Server offline';}
+}
+
+// ─── TAB 1: SINGLE PROP ───────────────────────────────
+async function runProp(){
+  const player=document.getElementById('prop-player').value.trim();
+  const opp=document.getElementById('prop-opp').value.trim().toUpperCase();
+  const date=document.getElementById('prop-date').value;
+  const is_home=parseInt(document.getElementById('prop-home').value);
+  const line=parseFloat(document.getElementById('prop-line').value);
+  const side=document.getElementById('prop-side').value;
+  const odds=parseInt(document.getElementById('prop-odds').value);
+  if(!player||!opp||!date||isNaN(line)||isNaN(odds)){toast('Fill all required fields.');return;}
+  const btn=document.getElementById('prop-btn');
+  btn.innerHTML='<span class="spinner"></span> Evaluating…';btn.disabled=true;
+  try{const r=await api('/api/evaluate',{player_name:player,opponent:opp,is_home,game_date:date,line,side,american_odds:odds});renderProp(r);}
+  catch(e){toast('Error: '+e.message,5000);}
+  finally{btn.textContent='Evaluate Prop';btn.disabled=false;}
+}
+function renderProp(r){
+  document.getElementById('prop-placeholder').style.display='none';
+  document.getElementById('prop-result').style.display='block';
+  const injRow=r.injury_note?`['Injury Context','${r.injury_note}']`:'';
+  const rows=[
+    ['Player',r.player],
+    ['Prop',`${r.side.toUpperCase()} ${r.line} pts @ ${fmtAm(r.book_odds)}`],
+    ['Predicted Min',`${r.pred_min} ± ${r.min_std} min`],
+    ['Predicted Pts',`${r.pred_pts} ± ${r.pts_std} pts`],
+    ['P(Over) / P(Under)',`${pct(r.p_over)} / ${pct(r.p_under)}`],
+    ['Model Probability',pct(r.model_prob)],
+    ['Book Implied',pct(r.book_prob)],
+    ['Edge',`${r.edge>=0?'+':''}${(r.edge*100).toFixed(1)}%`],
+    ['Fair / Model Odds',`${fmtAm(r.fair_american)} / ${fmtAm(r.model_american)}`],
+    ['Player Model',r.player_model?`Yes (${r.games_seen} games)`:'No (league baseline)'],
+  ];
+  if(r.injury_note) rows.splice(2,0,['Injury Context',r.injury_note]);
+  if(r.teammate_min_absorbed>0) rows.push(['Teammate Boost',`+${r.teammate_min_absorbed} min projected`]);
+  if(r.opp_stars_out>0) rows.push(['Opp Stars Out',`${r.opp_stars_out} star(s) missing`]);
+  document.getElementById('prop-result-inner').innerHTML=rows.map(([k,v])=>`<div class="eval-row"><span class="eval-key">${k}</span><span class="eval-val">${v}</span></div>`).join('');
+  const box=document.getElementById('prop-bet-box');
+  if(r.has_edge){box.className='bet-box bet-yes';box.innerHTML=`✅ BET ${r.side.toUpperCase()} — Edge: +${(r.edge*100).toFixed(1)}%`;}
+  else{box.className='bet-box bet-no';box.innerHTML='❌ NO BET — model does not find edge on this side';}
+}
+
+// ─── TAB 2: PARLAY ────────────────────────────────────
+let _pm='american';
+function setParlayMode(m){
+  _pm=m;
+  document.getElementById('pm-american').classList.toggle('active',m==='american');
+  document.getElementById('pm-mult').classList.toggle('active',m==='multiplier');
+  document.getElementById('pw-american').style.display=m==='american'?'':'none';
+  document.getElementById('pw-mult').style.display=m==='multiplier'?'':'none';
+  document.getElementById('pm-hint').textContent=m==='american'
+    ?'Enter American odds for the parlay payout below.'
+    :'Enter the profit multiplier (e.g. 3.5 = $35 profit on $10 bet). Leg odds are reference only.';
+}
+
+async function runParlay(){
+  const p1odds=parseInt(document.getElementById('p1-odds').value)||(-110);
+  const p2odds=parseInt(document.getElementById('p2-odds').value)||(-110);
+  const leg1={player_name:document.getElementById('p1-player').value.trim(),opponent:document.getElementById('p1-opp').value.trim().toUpperCase(),is_home:parseInt(document.getElementById('p1-home').value),game_date:document.getElementById('p1-date').value,line:parseFloat(document.getElementById('p1-line').value),side:document.getElementById('p1-side').value,american_odds:p1odds};
+  const leg2={player_name:document.getElementById('p2-player').value.trim(),opponent:document.getElementById('p2-opp').value.trim().toUpperCase(),is_home:parseInt(document.getElementById('p2-home').value),game_date:document.getElementById('p2-date').value,line:parseFloat(document.getElementById('p2-line').value),side:document.getElementById('p2-side').value,american_odds:p2odds};
+  if(!leg1.player_name||!leg2.player_name||isNaN(leg1.line)||isNaN(leg2.line)){toast('Fill in both legs.');return;}
+
+  let payload={leg1,leg2};
+  if(_pm==='american'){const v=parseInt(document.getElementById('parlay-odds-am').value);if(isNaN(v)){toast('Enter parlay American odds.');return;}payload.parlay_american_odds=v;}
+  else{const v=parseFloat(document.getElementById('parlay-odds-mx').value);if(isNaN(v)||v<=0){toast('Enter a valid multiplier > 0.');return;}payload.parlay_multiplier=v;}
+
+  const btn=document.getElementById('parlay-btn');
+  btn.innerHTML='<span class="spinner"></span> Evaluating…';btn.disabled=true;
+  try{const r=await api('/api/evaluate_parlay',payload);renderParlay(r);}
+  catch(e){toast('Error: '+e.message,5000);}
+  finally{btn.textContent='Evaluate Parlay';btn.disabled=false;}
+}
+
+function renderParlay(r){
+  document.getElementById('parlay-placeholder').style.display='none';
+  document.getElementById('parlay-result').style.display='block';
+  const lc=['var(--accent)','var(--accent2)'];
+  document.getElementById('parlay-leg-cards').innerHTML=['leg1','leg2'].map((lk,i)=>{
+    const leg=r[lk];const ec=leg.has_edge?'badge-green':'badge-red';
+    const injHtml=leg.injury_note?`<div style="font-size:0.75rem;color:var(--yellow);margin-top:6px">${leg.injury_note}</div>`:'';
+    return `<div class="card"><div class="card-title" style="color:${lc[i]}">Leg ${i+1}: ${leg.player}</div>
+      <div class="eval-row"><span class="eval-key">Prop</span><span class="eval-val">${leg.side.toUpperCase()} ${leg.line} pts @ ${fmtAm(leg.book_odds)}</span></div>
+      <div class="eval-row"><span class="eval-key">Predicted pts</span><span class="eval-val">${leg.pred_pts} ± ${leg.pts_std}</span></div>
+      <div class="eval-row"><span class="eval-key">Predicted min</span><span class="eval-val">${leg.pred_min} ± ${leg.min_std}</span></div>
+      <div class="eval-row"><span class="eval-key">Model prob</span><span class="eval-val">${pct(leg.model_prob)}</span></div>
+      <div class="eval-row"><span class="eval-key">Leg edge alone</span><span class="eval-val"><span class="badge ${ec}">${leg.edge>=0?'+':''}${(leg.edge*100).toFixed(1)}%</span></span></div>
+      ${injHtml}
+      ${!leg.player_model?'<div style="font-size:0.75rem;color:var(--muted);margin-top:6px">⚠ League baseline only</div>':''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('parlay-kpis').innerHTML=[
+    {label:'Joint Model Prob',val:pct(r.model_joint_prob),sub:'P(Leg1) × P(Leg2)'},
+    {label:'Book Breakeven',val:pct(r.book_break_even),sub:'from book payout'},
+    {label:'Edge',val:`${r.edge>=0?'+':''}${(r.edge*100).toFixed(1)}%`,sub:r.has_edge?'✓ Positive':'✗ No edge'},
+    {label:'Fair Payout',val:fmtAm(r.parlay_fair_american),sub:fmtMx(r.parlay_fair_multiplier)},
+  ].map(m=>`<div class="card"><div class="card-title">${m.label}</div><div class="metric-big">${m.val}</div><div class="metric-sub">${m.sub}</div></div>`).join('');
+
+  const mx1=(1/r.leg1_model_prob-1); const mx2=(1/r.leg2_model_prob-1);
+  document.getElementById('parlay-compare-rows').innerHTML=`
+    <tr><td>Leg 1 — ${r.leg1.player}</td><td>${pct(r.leg1_model_prob)}</td><td>${fmtAm(r.leg1.model_american)}</td><td>${fmtMx(mx1)}</td></tr>
+    <tr><td>Leg 2 — ${r.leg2.player}</td><td>${pct(r.leg2_model_prob)}</td><td>${fmtAm(r.leg2.model_american)}</td><td>${fmtMx(mx2)}</td></tr>
+    <tr style="border-top:1px solid var(--border);font-weight:600"><td>Combined (both hit)</td><td>${pct(r.model_joint_prob)}</td><td>${fmtAm(r.parlay_fair_american)} (fair)</td><td>${fmtMx(r.parlay_fair_multiplier)} (fair)</td></tr>
+    <tr style="color:var(--muted)"><td>Book offering</td><td>${pct(r.book_break_even)}</td><td>${fmtAm(r.parlay_book_odds)}</td><td>${fmtMx(r.parlay_book_multiplier)}</td></tr>`;
+
+  const box=document.getElementById('parlay-bet-box');
+  if(r.has_edge){box.className='bet-box bet-yes';box.innerHTML=`✅ BET PARLAY — Edge: +${(r.edge*100).toFixed(1)}%`;}
+  else{box.className='bet-box bet-no';box.innerHTML=`❌ NO BET — Joint prob (${pct(r.model_joint_prob)}) ≤ breakeven (${pct(r.book_break_even)})`;}
+}
+
+// ─── TAB 3: BATCH COMBOS ──────────────────────────────
+let _bm='american', _batchCombos=[], _batchFile=null;
+
+function setBatchMode(m){
+  _bm=m;
+  document.getElementById('bm-american').classList.toggle('active',m==='american');
+  document.getElementById('bm-mult').classList.toggle('active',m==='multiplier');
+  document.getElementById('fair-header').textContent=m==='american'?'Fair Odds':'Fair Mult';
+  renderComboTable(_batchCombos);
+}
+
+// Drag-and-drop
+const dz=document.getElementById('batch-drop');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');const f=e.dataTransfer.files[0];if(f)_setBatchFile(f);});
+
+function handleBatchFile(inp){if(inp.files[0])_setBatchFile(inp.files[0]);}
+function _setBatchFile(f){_batchFile=f;document.getElementById('batch-file-name').textContent='📄 '+f.name;}
+
+async function runBatch(){
+  if(!_batchFile){toast('Upload a spreadsheet first.');return;}
+  const gameDate=document.getElementById('batch-date').value;
+  const btn=document.getElementById('batch-btn');
+  btn.innerHTML='<span class="spinner"></span> Evaluating…';btn.disabled=true;
+  document.getElementById('batch-placeholder').style.display='none';
+  try{
+    const rows=await parseSpreadsheet(_batchFile);
+    if(!rows.length){toast('No valid rows found in file.');return;}
+    const r=await api('/api/batch_props',{rows,game_date:gameDate});
+    _batchCombos=r.combos;
+    renderBatchProps(r.props);
+    renderComboTable(r.combos);
+    document.getElementById('batch-combos-section').style.display='block';
+  }catch(e){toast('Error: '+e.message,6000);document.getElementById('batch-placeholder').style.display='block';}
+  finally{btn.textContent='Analyze All Combos';btn.disabled=false;}
+}
+
+async function parseSpreadsheet(file){
+  // Load SheetJS from CDN
+  const src='https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs';
+  let XLSX;
+  if(window._XLSX){XLSX=window._XLSX;}
+  else{const m=await import(src);XLSX=m;window._XLSX=m;}
+  const buf=await file.arrayBuffer();
+  const wb=XLSX.read(buf,{type:'array'});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const raw=XLSX.utils.sheet_to_json(ws,{defval:''});
+  return raw.map(row=>{
+    const n={};
+    for(const[k,v]of Object.entries(row))n[k.toLowerCase().replace(/[\s\-]/g,'_')]=v;
+    const player=String(n.player_name||n.player||n.name||'').trim();
+    const opp=String(n.opponent||n.opp||n.team||'').trim().toUpperCase();
+    const line=parseFloat(n.prop_line??n.line??n.points_line??0);
+    const home=n.is_home!=null?parseInt(n.is_home):(String(n.home_away||'').toLowerCase()==='away'?0:1);
+    const gdate=String(n.game_date||n.date||'').trim();
+    if(!player||isNaN(line)||line<=0)return null;
+    return{player_name:player,opponent:opp,is_home:home,prop_line:line,game_date:gdate};
+  }).filter(Boolean);
+}
+
+function renderBatchProps(props){
+  document.getElementById('batch-props-card').style.display='block';
+  document.querySelector('#batch-props-table tbody').innerHTML=props.map(p=>{
+    if(p.error)return`<tr><td colspan="6" style="color:var(--red)">${p.player}: ${p.error}</td></tr>`;
+    const sc=p.best_side==='over'?'badge-green':'badge-red';
+    return`<tr><td>${p.player}</td><td>${p.opponent}</td><td>${p.prop_line}</td>
+      <td><span class="badge ${sc}">${(p.best_side||'').toUpperCase()}</span></td>
+      <td>${pct(p.model_prob)}</td><td>${p.pred_pts??'—'}</td></tr>`;
+  }).join('');
+}
+
+function renderComboTable(combos){
+  document.getElementById('combo-count').textContent=`(${combos.length})`;
+  const tbody=document.getElementById('batch-combo-tbody');
+  if(!combos.length){tbody.innerHTML='<tr><td colspan="10" style="color:var(--muted);text-align:center;padding:20px">No combinations to show.</td></tr>';return;}
+  const maxJ=Math.max(...combos.map(c=>c.joint_prob));
+  const show=combos.slice(0,200);
+  tbody.innerHTML=show.map(c=>{
+    const barW=((c.joint_prob/maxJ)*100).toFixed(1);
+    const fairVal=_bm==='american'?fmtAm(c.fair_american):fmtMx(c.fair_multiplier);
+    const s1c=c.leg1_side==='over'?'badge-green':'badge-red';
+    const s2c=c.leg2_side==='over'?'badge-green':'badge-red';
+    return`<tr>
+      <td>${c.leg1_player}</td><td><span class="badge ${s1c}">${(c.leg1_side||'').toUpperCase()}</span></td><td>${c.leg1_line}</td><td style="color:var(--muted)">${pct(c.leg1_prob)}</td>
+      <td>${c.leg2_player}</td><td><span class="badge ${s2c}">${(c.leg2_side||'').toUpperCase()}</span></td><td>${c.leg2_line}</td><td style="color:var(--muted)">${pct(c.leg2_prob)}</td>
+      <td><span class="joint-bar"><span class="joint-bar-fill" style="width:${barW}%"></span></span>${pct(c.joint_prob)}</td>
+      <td style="font-weight:600;color:var(--accent)">${fairVal}</td>
+    </tr>`;
+  }).join('');
+  if(combos.length>200)tbody.innerHTML+=`<tr><td colspan="10" style="color:var(--muted);text-align:center;padding:10px">Showing top 200 of ${combos.length}. Use filters to narrow.</td></tr>`;
+}
+
+let _sortDir=-1;
+function sortCombos(key){_sortDir*=-1;_batchCombos.sort((a,b)=>(a[key]-b[key])*_sortDir);renderComboTable(_batchCombos);}
+
+function applyFilters(){
+  const minJ=parseFloat(document.getElementById('filter-min-joint').value)||0;
+  const pq=document.getElementById('filter-player').value.toLowerCase().trim();
+  const sk=document.getElementById('filter-sort').value;
+  let f=_batchCombos.filter(c=>{
+    if(c.joint_prob*100<minJ)return false;
+    if(pq&&!c.leg1_player.toLowerCase().includes(pq)&&!c.leg2_player.toLowerCase().includes(pq))return false;
+    return true;
+  });
+  f.sort((a,b)=>sk==='joint_prob'?b.joint_prob-a.joint_prob:sk==='fair_american'?(b.fair_american||0)-(a.fair_american||0):(b.fair_multiplier||0)-(a.fair_multiplier||0));
+  renderComboTable(f);
+}
+
+function exportCombos(){
+  if(!_batchCombos.length){toast('No combos to export.');return;}
+  const h=['leg1_player','leg1_side','leg1_line','leg1_prob','leg2_player','leg2_side','leg2_line','leg2_prob','joint_prob','fair_american','fair_multiplier'];
+  const rows=[h.join(','),..._batchCombos.map(c=>h.map(k=>`"${c[k]??''}"`).join(','))];
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download='parlay_combos.csv';a.click();
+}
+
+function clearBatch(){
+  _batchFile=null;_batchCombos=[];
+  document.getElementById('batch-file-name').textContent='';
+  document.getElementById('batch-file').value='';
+  document.getElementById('batch-props-card').style.display='none';
+  document.getElementById('batch-combos-section').style.display='none';
+  document.getElementById('batch-placeholder').style.display='block';
+}
+
+// ─── TAB 4: MODEL ACCURACY ────────────────────────────
+async function runEvaluation(){
+  const model=document.getElementById('eval-model').value;
+  const btn=document.getElementById('eval-btn');
+  btn.innerHTML='<span class="spinner"></span> Running OOS…';btn.disabled=true;
+  document.getElementById('eval-placeholder').style.display='none';
+  document.getElementById('eval-result').style.display='none';
+  try{const r=await api('/api/evaluate_model',{model});renderEval(r);}
+  catch(e){toast('Eval failed: '+e.message,5000);document.getElementById('eval-placeholder').style.display='block';document.getElementById('eval-placeholder').textContent='Error: '+e.message;}
+  finally{btn.textContent='Run OOS Evaluation';btn.disabled=false;}
+}
+
+function _foldRows(folds,tbodyId){
+  if(!folds)return;
+  document.querySelector('#'+tbodyId+' tbody').innerHTML=folds.map(f=>{
+    const imp=f.league_mae-f.final_mae;
+    return`<tr>
+      <td>${f.fold}</td><td>${f.n_test.toLocaleString()}</td>
+      <td>${fmt(f.league_mae)}</td>
+      <td style="font-weight:600;color:var(--accent)">${fmt(f.final_mae)}</td>
+      <td>${fmt(f.final_r2)}</td>
+      <td>${pct(f.within_5)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderEval(r){
+  document.getElementById('eval-result').style.display='block';
+  if(r.pts){
+    document.getElementById('eval-pts-section').style.display='block';
+    const oos=r.pts.oos;
+    document.getElementById('eval-pts-kpis').innerHTML=[
+      {l:'OOS Final MAE',v:fmt(oos.final_mae_mean)+' pts',s:`±${fmt(oos.final_mae_std)} std across folds`},
+      {l:'OOS League MAE',v:fmt(oos.league_mae_mean)+' pts',s:`baseline comparison`},
+      {l:'OOS Final R²',v:fmt(oos.final_r2_mean),s:`±${fmt(oos.final_r2_std)}`},
+      {l:'Within 5 pts',v:pct(oos.within_5),s:`Within 2: ${pct(oos.within_2)}`},
+    ].map(m=>`<div class="card"><div class="card-title">${m.l}</div><div class="metric-big">${m.v}</div><div class="metric-sub">${m.s}</div></div>`).join('');
+    _foldRows(r.pts.folds,'eval-pts-fold-table');
+    if(r.pts.error_histogram){
+      const mx=Math.max(...r.pts.error_histogram.map(h=>h.count));
+      document.getElementById('eval-error-hist').innerHTML=r.pts.error_histogram.map(h=>`<div class="mini-bar-row"><div class="mini-bar-label">${h.bin} pts</div><div class="mini-bar-bg"><div class="mini-bar-fill" style="width:${(h.count/mx*100).toFixed(1)}%"></div></div><div class="mini-bar-val">${h.count.toLocaleString()}</div></div>`).join('');
+    }
+    if(r.pts.player_leaderboard){
+      document.querySelector('#eval-player-table tbody').innerHTML=r.pts.player_leaderboard.slice(0,20).map(pl=>{
+        const imp=pl.league_mae-pl.final_mae;
+        return`<tr><td>${pl.player}</td><td>${pl.games}</td><td>${fmt(pl.league_mae)}</td><td>${fmt(pl.final_mae)}</td><td><span class="badge ${imp>0?'badge-green':'badge-red'}">${imp>0?'↓':'↑'}${Math.abs(imp).toFixed(2)}</span></td></tr>`;
+      }).join('');
+    }
+  } else document.getElementById('eval-pts-section').style.display='none';
+
+  if(r.min){
+    document.getElementById('eval-min-section').style.display='block';
+    const oos=r.min.oos;
+    document.getElementById('eval-min-kpis').innerHTML=[
+      {l:'OOS Final MAE',v:fmt(oos.final_mae_mean)+' min',s:`±${fmt(oos.final_mae_std)} std`},
+      {l:'OOS League MAE',v:fmt(oos.league_mae_mean)+' min',s:'baseline'},
+      {l:'OOS Final R²',v:fmt(oos.final_r2_mean),s:`±${fmt(oos.final_r2_std)}`},
+      {l:'Within 5 min',v:pct(oos.within_5),s:`Within 2: ${pct(oos.within_2)}`},
+    ].map(x=>`<div class="card"><div class="card-title">${x.l}</div><div class="metric-big">${x.v}</div><div class="metric-sub">${x.s}</div></div>`).join('');
+    _foldRows(r.min.folds,'eval-min-fold-table');
+  } else document.getElementById('eval-min-section').style.display='none';
+
+  if(r.feature_importances&&r.feature_importances.length){
+    document.getElementById('eval-fi-section').style.display='block';
+    const mi=Math.max(...r.feature_importances.map(f=>f.importance));
+    document.getElementById('eval-fi-bars').innerHTML=r.feature_importances.slice(0,20).map(f=>`<div class="mini-bar-row"><div class="mini-bar-label">${f.feature}</div><div class="mini-bar-bg"><div class="mini-bar-fill" style="width:${(f.importance/mi*100).toFixed(1)}%"></div></div><div class="mini-bar-val">${fmt(f.importance,4)}</div></div>`).join('');
+  }
+}
+
+// ─── TAB 5: RETRAIN ───────────────────────────────────
+let _pi=null;
+async function startRetrain(){
+  const dp=document.getElementById('retrain-data').value.trim()||null;
+  const btn=document.getElementById('retrain-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Starting…';
+  try{await api('/api/retrain',{data_path:dp});document.getElementById('retrain-steps').style.display='block';_pi=setInterval(pollRetrain,2000);pollRetrain();}
+  catch(e){toast('Error: '+e.message);btn.disabled=false;btn.textContent='Start Retrain';}
+}
+async function pollRetrain(){
+  try{
+    const s=await api('/api/retrain/status');
+    const ic={running:'<span class="spinner"></span>',ok:'✅',failed:'❌'};
+    document.getElementById('retrain-step-list').innerHTML=s.steps.map(st=>`<div class="retrain-step"><span class="step-icon">${ic[st.status]||'⏳'}</span><span style="flex:1">${st.step}</span><span style="color:var(--muted);font-size:0.78rem">${st.elapsed?st.elapsed+'s':''}</span></div>`).join('');
+    if(s.done||!s.running){clearInterval(_pi);const btn=document.getElementById('retrain-btn');btn.disabled=false;btn.textContent='Start Retrain';if(s.error)toast('Pipeline error: '+s.error,7000);else{toast('✅ Pipeline completed!');refreshStatus();}}
+  }catch{}
+}
+
+// ─── INIT ─────────────────────────────────────────────
+refreshStatus();
+</script>
+</body>
+</html>
